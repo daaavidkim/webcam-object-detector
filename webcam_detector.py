@@ -75,7 +75,7 @@ while True:
         print("Failing to read webcam.")
         break
 
-    results = model(frame)
+    results = model.track(frame)
 
     detected_objects = set()
 

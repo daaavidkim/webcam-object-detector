@@ -4,13 +4,10 @@ import os
 import csv
 from datetime import datetime
 
-# loads yolo model
+# Load YOLO model
 model = YOLO("yolo11n.pt")
 
-# since we only need necessary objects for security cam
-# create watch list with only necessary objects
-# only obj we check for
-
+# Security-relevant objects
 SECURITY_OBJ = {
     "person",
     "car",
@@ -19,53 +16,55 @@ SECURITY_OBJ = {
 }
 
 MIN_CON = 0.50
-EXIT = 2
-#how long obj must be gone for it to be recorded **this is for frame lag
-#or in case camera doesn't catch obj for a frame
+EXIT_TIMEOUT = 2
 
-
-#check folder exists
+# Create folders if they do not exist
 os.makedirs("captures/entries", exist_ok=True)
 os.makedirs("captures/exits", exist_ok=True)
 os.makedirs("logs", exist_ok=True)
+os.makedirs("recordings", exist_ok=True)
+
 csv_file = "logs/events.csv"
 
-#only want to create csv file once
-#first time (not false)
+# Create CSV file only once
 if not os.path.exists(csv_file):
     with open(csv_file, "w", newline="") as file:
-        write = csv.writer(file)
-        write.writerow([
+        writer = csv.writer(file)
+        writer.writerow([
             "timestamp",
             "event",
             "object",
             "duration_seconds"
         ])
 
-# obj state
-
+# Object state
 OBJECT_STATE = {
-    "person" : False,
-    "car" : False,
-    "truck" : False,
-    "motorcycle" : False
+    "person": False,
+    "car": False,
+    "truck": False,
+    "motorcycle": False
 }
 
-ENTRY_TIMES = { 
-    "person" : None,
-    "car" : None,
-    "truck" : None,
-    "motorcycle" : None
+ENTRY_TIMES = {
+    "person": None,
+    "car": None,
+    "truck": None,
+    "motorcycle": None
 }
 
 LAST_SEEN = {
-    "person" : None,
-    "car" : None,
-    "truck" : None,
-    "motorcycle" : None
+    "person": None,
+    "car": None,
+    "truck": None,
+    "motorcycle": None
 }
 
-# opens webcam
+# Video recording state
+RECORDING = False
+VIDEO_WRITER = None
+VIDEO_START_TIME = None
+
+# Open webcam
 cap = cv2.VideoCapture(0)
 
 while True:
@@ -75,7 +74,7 @@ while True:
         print("Failing to read webcam.")
         break
 
-    results = model.track(frame)
+    results = model(frame)
 
     detected_objects = set()
 
@@ -86,14 +85,11 @@ while True:
             confidence = float(box.conf[0])
             label = result.names[class_id]
 
-
-            #checks if in security_obj and that the model is confident
-            if(label in SECURITY_OBJ and confidence >= MIN_CON):
+            if label in SECURITY_OBJ and confidence >= MIN_CON:
                 detected_objects.add(label)
                 LAST_SEEN[label] = datetime.now()
 
-    #obj entry
-
+    # Object entries
     for obj in detected_objects:
 
         if not OBJECT_STATE[obj]:
@@ -101,6 +97,28 @@ while True:
 
             entry_time = datetime.now()
             ENTRY_TIMES[obj] = entry_time
+
+            # Start recording when the first object enters
+            if not RECORDING:
+                RECORDING = True
+                VIDEO_START_TIME = entry_time
+
+                height, width = frame.shape[:2]
+                fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+
+                video_filename = (
+                    f"recordings/"
+                    f"event_{VIDEO_START_TIME.strftime('%Y%m%d_%H%M%S')}.mp4"
+                )
+
+                VIDEO_WRITER = cv2.VideoWriter(
+                    video_filename,
+                    fourcc,
+                    20.0,
+                    (width, height)
+                )
+
+                print(f"Started recording: {video_filename}")
 
             print(
                 f"{obj.upper()} ENTERED at "
@@ -113,9 +131,9 @@ while True:
             )
 
             cv2.imwrite(filename, frame)
+
             with open(csv_file, "a", newline="") as file:
                 writer = csv.writer(file)
-
                 writer.writerow([
                     entry_time,
                     "ENTER",
@@ -123,16 +141,21 @@ while True:
                     ""
                 ])
 
-    #obj exits
+    # Object exits
     for obj in SECURITY_OBJ:
+
         if OBJECT_STATE[obj]:
 
-            time_since_seen = (datetime.now() - LAST_SEEN[obj]).total_seconds()
+            time_since_seen = (
+                datetime.now() - LAST_SEEN[obj]
+            ).total_seconds()
 
-            if time_since_seen >= EXIT:
+            if time_since_seen >= EXIT_TIMEOUT:
                 exit_time = datetime.now()
 
-                duration = (exit_time - ENTRY_TIMES[obj]).total_seconds()
+                duration = (
+                    exit_time - ENTRY_TIMES[obj]
+                ).total_seconds()
 
                 print(
                     f"{obj.upper()} EXITED at "
@@ -149,27 +172,45 @@ while True:
 
                 with open(csv_file, "a", newline="") as file:
                     writer = csv.writer(file)
-
                     writer.writerow([
                         exit_time,
                         "EXIT",
                         obj,
                         f"{duration:.1f}"
                     ])
+
                 OBJECT_STATE[obj] = False
                 ENTRY_TIMES[obj] = None
 
+    # Write video frame if currently recording
+    if RECORDING and VIDEO_WRITER is not None:
+        VIDEO_WRITER.write(frame)
 
-    #boxes
+    # Stop recording when all objects have exited
+    if RECORDING and not any(OBJECT_STATE.values()):
+        RECORDING = False
+
+        VIDEO_WRITER.release()
+        VIDEO_WRITER = None
+        VIDEO_START_TIME = None
+
+        print("Recording stopped.")
+
+    # Display bounding boxes
     annotated_frame = results[0].plot()
-    # captures everythingokay
+
     cv2.imshow(
         "Security Camera",
         annotated_frame
     )
-    #esc = quit
+
+    # ESC to quit
     if cv2.waitKey(1) == 27:
         break
+
+# Clean up
+if VIDEO_WRITER is not None:
+    VIDEO_WRITER.release()
 
 cap.release()
 cv2.destroyAllWindows()

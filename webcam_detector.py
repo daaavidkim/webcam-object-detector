@@ -3,20 +3,18 @@ import cv2
 import os
 import csv
 from datetime import datetime
+import json
+
+with open("config.json", "r") as file:
+    config = json.load(file)
 
 # Load YOLO model
 model = YOLO("yolo11n.pt")
 
 # Security-relevant objects
-SECURITY_OBJ = {
-    "person",
-    "car",
-    "truck",
-    "motorcycle"
-}
-
-MIN_CON = 0.50
-EXIT_TIMEOUT = 2
+SECURITY_OBJ = set(config["security_objects"])
+MIN_CON = config["min_confidence"]
+EXIT_TIMEOUT = config["exit_timeout"]
 
 # Create folders if they do not exist
 os.makedirs("captures/entries", exist_ok=True)
@@ -38,26 +36,9 @@ if not os.path.exists(csv_file):
         ])
 
 # Object state
-OBJECT_STATE = {
-    "person": False,
-    "car": False,
-    "truck": False,
-    "motorcycle": False
-}
-
-ENTRY_TIMES = {
-    "person": None,
-    "car": None,
-    "truck": None,
-    "motorcycle": None
-}
-
-LAST_SEEN = {
-    "person": None,
-    "car": None,
-    "truck": None,
-    "motorcycle": None
-}
+OBJECT_STATE = {obj: False for obj in SECURITY_OBJ}
+ENTRY_TIMES = {obj: None for obj in SECURITY_OBJ}
+LAST_SEEN = {obj: None for obj in SECURITY_OBJ}
 
 # Video recording state
 RECORDING = False
@@ -198,6 +179,49 @@ while True:
 
     # Display bounding boxes
     annotated_frame = results[0].plot()
+
+    active_objects = [
+        obj for obj, state in OBJECT_STATE.items()
+        if state
+    ]
+
+    cv2.putText(
+        annotated_frame,
+        f"Recording: {'ON' if RECORDING else 'OFF'}",
+        (10, 30),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.7,
+        (0, 0, 255) if RECORDING else (0, 255, 0),
+        2
+    )
+
+    cv2.putText(
+        annotated_frame,
+        f"Objects: {', '.join(active_objects) if active_objects else 'None'}",
+        (10, 60),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.7,
+        (255, 255, 255),
+        2
+    )
+
+    if RECORDING and VIDEO_START_TIME:
+        duration = int(
+            (datetime.now() - VIDEO_START_TIME).total_seconds()
+        )
+
+        minutes = duration // 60
+        seconds = duration % 60
+
+        cv2.putText(
+            annotated_frame,
+            f"Duration: {minutes:02d}:{seconds:02d}",
+            (10, 90),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.7,
+            (255, 255, 255),
+            2
+        )
 
     cv2.imshow(
         "Security Camera",

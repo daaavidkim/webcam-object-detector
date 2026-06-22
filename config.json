@@ -1,0 +1,5 @@
+{
+  "security_objects": ["person", "car", "truck", "motorcycle"],
+  "min_confidence": 0.5,
+  "exit_timeout": 2
+}

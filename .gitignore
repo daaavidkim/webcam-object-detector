@@ -6,3 +6,7 @@ recordings/
 captures/
 logs/events.csv
 test_torch.py
+datasets/
+training/runs/
+runs/
+weapon_detection/

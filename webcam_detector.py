@@ -10,6 +10,8 @@ with open("config.json", "r") as file:
 
 # Load YOLO model
 model = YOLO("yolo11n.pt")
+firearm_model = YOLO("runs/detect/train-3/weights/best.pt")
+
 
 # Security-relevant objects
 SECURITY_OBJ = set(config["security_objects"])
@@ -21,6 +23,7 @@ os.makedirs("captures/entries", exist_ok=True)
 os.makedirs("captures/exits", exist_ok=True)
 os.makedirs("logs", exist_ok=True)
 os.makedirs("recordings", exist_ok=True)
+os.makedirs("captures/firearms", exist_ok=True)
 
 csv_file = "logs/events.csv"
 
@@ -44,6 +47,10 @@ LAST_SEEN = {obj: None for obj in SECURITY_OBJ}
 RECORDING = False
 VIDEO_WRITER = None
 VIDEO_START_TIME = None
+FIREARM_PRESENT = False
+LAST_FIREARM_SEEN = None
+FIREARM_TIMEOUT = 3
+FIREARM_MIN_CON = 0.70
 
 # Open webcam
 cap = cv2.VideoCapture(0)
@@ -55,7 +62,15 @@ while True:
         print("Failing to read webcam.")
         break
 
-    results = model(frame)
+    results = model(
+        frame,
+        classes=[0, 2, 3, 7],
+        verbose=False
+    )
+    firearm_results = firearm_model(
+        frame,
+        verbose=False
+    )
 
     detected_objects = set()
 
@@ -69,6 +84,48 @@ while True:
             if label in SECURITY_OBJ and confidence >= MIN_CON:
                 detected_objects.add(label)
                 LAST_SEEN[label] = datetime.now()
+    
+    firearm_detected = False
+    firearm_confidence = 0
+
+    for result in firearm_results:
+        for box in result.boxes:
+            confidence = float(box.conf[0])
+            label = result.names[int(box.cls[0])]
+
+            if label == "firearm" and confidence >= FIREARM_MIN_CON:
+                firearm_detected = True
+                firearm_confidence = max(firearm_confidence, confidence)
+                LAST_FIREARM_SEEN = datetime.now()
+
+    if firearm_detected and not FIREARM_PRESENT:
+        FIREARM_PRESENT = True
+        firearm_time = datetime.now()
+
+        print(f"FIREARM DETECTED ({firearm_confidence:.2f})")
+
+        filename = (
+            f"captures/firearms/"
+            f"firearm_{firearm_time.strftime('%Y%m%d_%H%M%S')}.jpg"
+        )
+        cv2.imwrite(filename, frame)
+
+        with open(csv_file, "a", newline="") as file:
+            writer = csv.writer(file)
+            writer.writerow([
+                firearm_time,
+                "FIREARM_DETECTED",
+                "firearm",
+                ""
+            ])
+
+    if FIREARM_PRESENT and LAST_FIREARM_SEEN is not None:
+        time_since_firearm = (
+            datetime.now() - LAST_FIREARM_SEEN
+        ).total_seconds()
+
+        if time_since_firearm >= FIREARM_TIMEOUT:
+            FIREARM_PRESENT = False
 
     # Object entries
     for obj in detected_objects:
@@ -180,6 +237,31 @@ while True:
     # Display bounding boxes
     annotated_frame = results[0].plot()
 
+    for result in firearm_results:
+        for box in result.boxes:
+            confidence = float(box.conf[0])
+
+            if confidence >= FIREARM_MIN_CON:
+                x1, y1, x2, y2 = map(int, box.xyxy[0])
+
+                cv2.rectangle(
+                    annotated_frame,
+                    (x1, y1),
+                    (x2, y2),
+                    (0, 0, 255),
+                    2
+                )
+
+                cv2.putText(
+                    annotated_frame,
+                    f"FIREARM {confidence:.2f}",
+                    (x1, y1 - 10),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.7,
+                    (0, 0, 255),
+                    2
+                )
+
     active_objects = [
         obj for obj, state in OBJECT_STATE.items()
         if state
@@ -205,6 +287,16 @@ while True:
         2
     )
 
+    cv2.putText(
+        annotated_frame,
+        f"Firearm: {'DETECTED' if FIREARM_PRESENT else 'None'}",
+        (10, 120),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.7,
+        (0, 0, 255) if FIREARM_PRESENT else (255, 255, 255),
+        2
+    )
+
     if RECORDING and VIDEO_START_TIME:
         duration = int(
             (datetime.now() - VIDEO_START_TIME).total_seconds()
@@ -222,6 +314,7 @@ while True:
             (255, 255, 255),
             2
         )
+
 
     cv2.imshow(
         "Security Camera",

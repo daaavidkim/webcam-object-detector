@@ -17,10 +17,10 @@ and integrates a custom-trained firearm detection model.
 
 ## Technologies
 
-- Python
-- OpenCV
-- YOLO11
-- PyTorch
+- `Python`  Core application logic
+- `OpenCV`  Webcam access, image capture, video recording, and UI overlays
+- `YOLO11`  Real-time object detection
+- `PyTorch`  Neural network training and inference backend
 
 ## Structure
 
